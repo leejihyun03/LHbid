@@ -1019,6 +1019,7 @@ document.getElementById('who').addEventListener('change',()=>{
 
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script>
 (function(){
   const config={
@@ -1036,6 +1037,14 @@ document.getElementById('who').addEventListener('change',()=>{
   DB       = firebase.database().ref('gabwoo-contents-v1/lh2027');
   MEMO_REF = firebase.database().ref('gabwoo-contents-v1/lh2027/memoBoard');
 
+  /* 익명 인증: 화면에는 아무 표시도 없이 자동으로 로그인 처리 → 이후 규칙에서 auth!=null 조건 통과 */
+  firebase.auth().signInAnonymously().then(startApp).catch(err=>{
+    console.error('익명 인증 실패:',err.message);
+    document.getElementById('loading').style.display='none';
+    setSync('오프라인');
+  });
+
+  function startApp(){
   MEMO_REF.on('value', s=>renderMemo(s.val()));
 
   DB.once('value').then(snap=>{
@@ -1066,6 +1075,7 @@ document.getElementById('who').addEventListener('change',()=>{
     setSync('오프라인');
     render();
   });
+  } // startApp 끝
 })();
 </script>
 </body>
