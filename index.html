@@ -65,6 +65,18 @@ body{-webkit-font-smoothing:antialiased;}
 .dl-item b{font-weight:600;}
 .dl-item span{margin-left:auto;font-size:11px;color:var(--gray);}
 
+/* 변경 이력 / 되돌리기 */
+#histMenu{width:340px;max-height:400px;overflow-y:auto;}
+.hist-item{display:flex;flex-direction:column;gap:3px;padding:9px 10px;border-bottom:1px solid var(--border);}
+.hist-item:last-child{border-bottom:none;}
+.hist-item .hi-top{font-size:11px;color:var(--gray);}
+.hist-item .hi-label{font-size:12.5px;color:var(--text);line-height:1.4;}
+.hist-undo-btn{align-self:flex-end;margin-top:2px;padding:3px 11px;border:1px solid var(--blue);
+  border-radius:6px;background:#f3f7ff;color:var(--blue);font-size:11.5px;font-weight:600;
+  font-family:var(--font);cursor:pointer;}
+.hist-undo-btn:hover{background:#e8f0ff;}
+.hist-empty{padding:18px 10px;text-align:center;color:var(--gray);font-size:12.5px;}
+
 /* 섹션 네비 */
 .navbar{position:sticky;top:57px;z-index:45;background:#2f3035;border-bottom:1px solid var(--tb-border);
   padding:8px 20px;display:flex;gap:6px;overflow-x:auto;scrollbar-width:thin;}
@@ -220,6 +232,20 @@ table.cal td.deadline .dn{color:var(--red);}
   border-radius:6px;cursor:pointer;font-size:10px;line-height:1;padding:0;}
 .sched-move-btn:hover:not(:disabled){background:#eef3ff;border-color:#b8ccf3;color:var(--blue);}
 .sched-move-btn:disabled{opacity:.3;cursor:default;}
+#s_sched td.sched-colorcell{padding:0;text-align:center;vertical-align:middle;}
+.color-dot{width:16px;height:16px;border-radius:50%;border:1px solid rgba(0,0,0,.15);cursor:pointer;padding:0;}
+.color-pop{display:none;position:fixed;background:#fff;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.35);
+  padding:8px;z-index:200;grid-template-columns:repeat(6,22px);gap:6px;}
+.color-pop.show{display:grid;}
+.color-pop button{width:22px;height:22px;border-radius:6px;border:2px solid transparent;cursor:pointer;padding:0;}
+.color-pop button.active{border-color:#222;}
+.color-pop button.cp-auto{grid-column:span 6;width:auto;height:22px;background:#f2f2f4;color:var(--gray);
+  font-size:10.5px;font-family:var(--font);border-radius:6px;}
+.color-pop button.cp-auto.active{border-color:#222;}
+#s_sched td.sched-drag{padding:0;text-align:center;vertical-align:middle;color:#c3c9d4;cursor:grab;font-size:15px;user-select:none;}
+#s_sched td.sched-drag:active{cursor:grabbing;}
+#s_sched tr.dragging{opacity:.35;}
+#s_sched tr.drag-over td{box-shadow:inset 0 2px 0 var(--blue);}
 .sched-del-btn{width:22px;height:22px;border:1px solid var(--border);background:#fff;color:var(--gray);
   border-radius:6px;cursor:pointer;font-size:12px;line-height:1;padding:0;}
 .sched-del-btn:hover{background:#fdeaea;border-color:#f3b9b9;color:var(--red);}
@@ -252,6 +278,10 @@ table.cal td.deadline .dn{color:var(--red);}
     <input id="who" placeholder="이름" />
   </div>
   <span class="sync" id="sync">연결 중…</span>
+  <div class="dl-wrap" id="histWrap">
+    <button class="btn" id="histBtn">🕘 되돌리기</button>
+    <div class="dl-menu" id="histMenu"><div class="hist-empty">불러오는 중…</div></div>
+  </div>
   <div class="dl-wrap">
     <button class="btn" id="dlBtn">📄 RFP 원문 ▾</button>
     <div class="dl-menu" id="dlMenu"></div>
@@ -265,6 +295,8 @@ table.cal td.deadline .dn{color:var(--red);}
 <div class="progress-wrap"><div class="progress-outer"><div class="progress-inner" id="bar"></div></div></div>
 
 <div class="wrap" id="app"></div>
+
+<div class="color-pop" id="colorPop"></div>
 
 <div class="memo">
   <button class="memo-btn" id="memoBtn">📌 공유 메모<span class="memo-dot"></span></button>
@@ -443,8 +475,9 @@ const SECTIONS = [
 ];
 
 /* ═══════════ 상태 ═══════════ */
-let STATE = { checks:{}, owner:{}, memo:{}, title:{}, date:{}, schedOrder:['sch1','sch2','sch3','sch4'] };
-let DB=null, MEMO_REF=null, _remote=false;
+let STATE = { checks:{}, owner:{}, memo:{}, title:{}, date:{}, color:{}, schedOrder:['sch1','sch2','sch3','sch4'] };
+let DB=null, MEMO_REF=null, HIST_REF=null, _remote=false;
+let HISTORY = [];
 
 const esc = s => String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const who = () => (document.getElementById('who').value.trim() || '');
@@ -464,13 +497,33 @@ const SCHED_DEFAULTS = {
   sch3:{title:'디자인 시안 (시안·인쇄)', date:'8/14'},
   sch4:{title:'제출 서류 준비', date:'8/12'},
 };
-const SCHED_PALETTE = ['d1','d2','d3','d4'];
+const SCHED_COLORS = [
+  {key:'red',    hex:'#e0554f'},
+  {key:'orange', hex:'#e2823c'},
+  {key:'amber',  hex:'#d9a521'},
+  {key:'olive',  hex:'#9c9c2e'},
+  {key:'lime',   hex:'#7cb342'},
+  {key:'green',  hex:'#43a047'},
+  {key:'teal',   hex:'#26a69a'},
+  {key:'cyan',   hex:'#2aa8c2'},
+  {key:'blue',   hex:'#3f7fe0'},
+  {key:'indigo', hex:'#5c6bc0'},
+  {key:'purple', hex:'#8e5fd1'},
+  {key:'pink',   hex:'#d6549a'},
+  {key:'brown',  hex:'#8d6e63'},
+  {key:'gray',   hex:'#78828c'},
+];
 const SCHED_WD = ['일','월','화','수','목','금','토'];
 
 function schedOrder(){ return STATE.schedOrder && STATE.schedOrder.length ? STATE.schedOrder : ['sch1','sch2','sch3','sch4']; }
 function schedTitle(id){ return schedVal('title',id,(SCHED_DEFAULTS[id]&&SCHED_DEFAULTS[id].title)||''); }
 function schedDate(id){ return schedVal('date',id,(SCHED_DEFAULTS[id]&&SCHED_DEFAULTS[id].date)||''); }
-function schedColor(id){ const i = schedOrder().indexOf(id); return SCHED_PALETTE[(i<0?0:i) % SCHED_PALETTE.length]; }
+function schedColor(id){
+  const manual = STATE.color && STATE.color[id];
+  if(manual){ const c = SCHED_COLORS.find(c=>c.key===manual); if(c) return c.hex; }
+  const i = schedOrder().indexOf(id);
+  return SCHED_COLORS[(i<0?0:i) % SCHED_COLORS.length].hex;
+}
 function schedVal(k,id,def){ return (STATE[k] && STATE[k][id]) || def; }
 
 function parseSchedDate(str){
@@ -501,10 +554,12 @@ function schedWeekdayLabel(mo,d){
 /* 세부 일정 행 추가/삭제 */
 function schedAddRow(){
   const id = 'sch_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+  const beforeOrder = schedOrder().slice();
   if(!STATE.schedOrder) STATE.schedOrder = schedOrder().slice();
   STATE.schedOrder.push(id);
   STATE.title[id]=''; STATE.date[id]=''; STATE.owner[id]=''; STATE.memo[id]='';
   pushSchedOrder();
+  logHistory({kind:'schedAdd', id, before:{order:beforeOrder}, label:'세부일정 항목 추가'});
   render();
   setTimeout(()=>{
     const el=document.querySelector(`.f[data-k="title"][data-id="${id}"]`);
@@ -513,10 +568,13 @@ function schedAddRow(){
 }
 function schedRemoveRow(id){
   if(!confirm('이 일정 항목을 삭제할까요?')) return;
+  const snap = { order:schedOrder().slice(), title:STATE.title[id]||'', date:STATE.date[id]||'', owner:STATE.owner[id]||'', memo:STATE.memo[id]||'', color:(STATE.color&&STATE.color[id])||'' };
   STATE.schedOrder = schedOrder().filter(x=>x!==id);
   delete STATE.title[id]; delete STATE.date[id]; delete STATE.owner[id]; delete STATE.memo[id];
+  if(STATE.color) delete STATE.color[id];
   pushSchedOrder();
-  push('title',id,null); push('date',id,null); push('owner',id,null); push('memo',id,null);
+  push('title',id,null); push('date',id,null); push('owner',id,null); push('memo',id,null); push('color',id,null);
+  logHistory({kind:'schedRemove', id, before:snap, label:`세부일정 "${snap.title||'(제목 없음)'}" 삭제`});
   render();
 }
 function schedMoveRow(id,dir){
@@ -524,17 +582,127 @@ function schedMoveRow(id,dir){
   const i = arr.indexOf(id);
   const j = i + dir;
   if(i<0 || j<0 || j>=arr.length) return;
+  const before = arr.slice();
   [arr[i], arr[j]] = [arr[j], arr[i]];
   STATE.schedOrder = arr;
   pushSchedOrder();
+  logHistory({kind:'schedOrder', id:'schedOrder', before, label:`세부일정 순서 변경 (${itemLabel(id)})`});
+  render();
+}
+/* 드래그 앤 드롭으로 임의 위치 이동 */
+function schedReorder(dragId, targetId){
+  if(dragId===targetId) return;
+  const arr = schedOrder().slice();
+  const before = arr.slice();
+  const from = arr.indexOf(dragId);
+  if(from<0) return;
+  arr.splice(from,1);
+  let to = arr.indexOf(targetId);
+  if(to<0) to = arr.length;
+  arr.splice(to,0,dragId);
+  STATE.schedOrder = arr;
+  pushSchedOrder();
+  logHistory({kind:'schedOrder', id:'schedOrder', before, label:`세부일정 순서 변경(드래그, ${itemLabel(dragId)})`});
   render();
 }
 function pushSchedOrder(){
   if(!DB) return;
+  const sent = STATE.schedOrder.slice();
+  _pending['schedOrder'] = sent;
   setSync('저장 중…');
-  DB.child('schedOrder').set(STATE.schedOrder)
-    .then(()=>setSync('동기화됨',true))
+  DB.child('schedOrder').set(sent)
+    .then(()=>{
+      setSync('동기화됨',true);
+      if(_pending['schedOrder']===sent) delete _pending['schedOrder'];
+    })
     .catch(()=>setSync('저장 실패'));
+}
+
+/* 세부일정 색상 지정 */
+function schedSetColor(id, key){
+  if(!STATE.color) STATE.color={};
+  const prev = STATE.color[id]||'';
+  STATE.color[id] = key||'';
+  _pending['color:'+id] = key||'';
+  push('color', id, key||null);
+  logHistory({kind:'field', k:'color', id, before:prev, label:`${itemLabel(id)} 색상 변경`});
+  render();
+}
+function openColorPicker(btn, id){
+  const pop = document.getElementById('colorPop');
+  if(!pop) return;
+  const cur = (STATE.color && STATE.color[id]) || '';
+  pop.innerHTML = `<button type="button" class="cp-auto ${cur?'':'active'}" data-key="" title="자동(기본 순서색)">자동</button>`
+    + SCHED_COLORS.map(c=>`<button type="button" class="${cur===c.key?'active':''}" data-key="${c.key}" style="background:${c.hex}" title="${c.key}"></button>`).join('');
+  const rect = btn.getBoundingClientRect();
+  pop.style.left = Math.min(rect.left, window.innerWidth-190)+'px';
+  pop.style.top = (rect.bottom+6)+'px';
+  pop.classList.add('show');
+  pop.querySelectorAll('button').forEach(b=>{
+    b.onclick = e=>{ e.stopPropagation(); schedSetColor(id, b.dataset.key); pop.classList.remove('show'); };
+  });
+}
+document.addEventListener('click', e=>{
+  const pop = document.getElementById('colorPop');
+  if(pop && pop.classList.contains('show') && !pop.contains(e.target) && !e.target.classList.contains('color-dot')){
+    pop.classList.remove('show');
+  }
+});
+
+/* ═══════════ 변경 이력 / 되돌리기 ═══════════ */
+function undoHistory(entry){
+  if(!entry) return;
+  if(entry.kind==='field'){
+    STATE[entry.k][entry.id] = entry.before;
+    push(entry.k, entry.id, entry.before);
+    if((entry.k==='title'||entry.k==='date') && String(entry.id).startsWith('sch')) renderCalendar();
+    logHistory({kind:'field', k:entry.k, id:entry.id, before:entry.after, label:`되돌림: ${itemLabel(entry.id)} ${K_LABEL[entry.k]||entry.k}`});
+  } else if(entry.kind==='schedOrder'){
+    STATE.schedOrder = entry.before.slice();
+    pushSchedOrder();
+    logHistory({kind:'schedOrder', id:'schedOrder', before:schedOrder().slice(), label:'되돌림: 세부일정 순서'});
+  } else if(entry.kind==='schedAdd'){
+    const id=entry.id;
+    STATE.schedOrder = schedOrder().filter(x=>x!==id);
+    delete STATE.title[id]; delete STATE.date[id]; delete STATE.owner[id]; delete STATE.memo[id];
+    pushSchedOrder();
+    push('title',id,null); push('date',id,null); push('owner',id,null); push('memo',id,null);
+    logHistory({kind:'schedRemove', id, before:entry.before, label:'되돌림: 추가된 세부일정 제거'});
+  } else if(entry.kind==='schedRemove'){
+    const id=entry.id, snap=entry.before;
+    STATE.schedOrder = snap.order.slice();
+    STATE.title[id]=snap.title; STATE.date[id]=snap.date; STATE.owner[id]=snap.owner; STATE.memo[id]=snap.memo;
+    if(!STATE.color) STATE.color={};
+    STATE.color[id]=snap.color||'';
+    pushSchedOrder();
+    push('title',id,snap.title); push('date',id,snap.date); push('owner',id,snap.owner); push('memo',id,snap.memo);
+    if(snap.color) push('color',id,snap.color);
+    logHistory({kind:'schedAdd', id, before:{order:schedOrder().filter(x=>x!==id)}, label:'되돌림: 삭제된 세부일정 복구'});
+  }
+  render();
+}
+function renderHistoryPanel(){
+  const menu=document.getElementById('histMenu');
+  if(!menu) return;
+  if(!HISTORY.length){ menu.innerHTML='<div class="hist-empty">아직 변경 이력이 없습니다.</div>'; return; }
+  menu.innerHTML = HISTORY.slice(0,30).map(e=>{
+    const dt=new Date(e.ts||0);
+    const time=`${String(dt.getMonth()+1).padStart(2,'0')}/${String(dt.getDate()).padStart(2,'0')} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
+    return `<div class="hist-item">
+      <div class="hi-top">${esc(e.who||'익명')} · ${time}</div>
+      <div class="hi-label">${esc(e.label||'')}</div>
+      <button type="button" class="hist-undo-btn" data-key="${e._key}">되돌리기</button>
+    </div>`;
+  }).join('');
+  menu.querySelectorAll('.hist-undo-btn').forEach(b=>{
+    b.addEventListener('click',()=>{
+      const entry=HISTORY.find(h=>h._key===b.dataset.key);
+      if(entry && confirm(`"${entry.label}" 항목을 되돌릴까요?`)){
+        undoHistory(entry);
+        document.getElementById('histMenu').classList.remove('show');
+      }
+    });
+  });
 }
 
 const CAL_JULY_HTML = `
@@ -641,6 +809,8 @@ function renderSchedCard(sec){
     const own = STATE.owner[id]||'';
     const mm  = STATE.memo[id]||'';
     return `<tr data-row="${id}">
+      <td class="sched-drag" draggable="true" data-id="${id}" title="드래그해서 순서 변경">⠿</td>
+      <td class="sched-colorcell"><button type="button" class="color-dot" data-id="${id}" style="background:${schedColor(id)}" title="색상 선택"></button></td>
       <td class="editable"><div class="fwrap"><textarea class="f ${t?'filled':''}" rows="1" data-k="title" data-id="${id}" placeholder="작업명">${esc(t)}</textarea></div></td>
       <td class="editable"><div class="fwrap"><textarea class="f ${d?'filled':''}" rows="1" data-k="date" data-id="${id}" placeholder="일정 (예: 7/27)">${esc(d)}</textarea></div></td>
       <td class="editable"><div class="fwrap"><textarea class="f ${own?'filled':''}" rows="1" data-k="owner" data-id="${id}" placeholder="담당">${esc(own)}</textarea></div></td>
@@ -653,7 +823,7 @@ function renderSchedCard(sec){
     </tr>`;
   }).join('');
 
-  const legend = ids.map(id=>`<span><i class="${schedColor(id)}"></i><span id="lg-${id}"></span></span>`).join('');
+  const legend = ids.map(id=>`<span><i style="background:${schedColor(id)}"></i><span id="lg-${id}"></span></span>`).join('');
 
   const dl = schedDeadline();
   const dlText = dl ? `${dl.mo}월 ${dl.d}일 (${schedWeekdayLabel(dl.mo,dl.d)})` : '미정';
@@ -677,7 +847,7 @@ function renderSchedCard(sec){
     </div>
     <div class="legend">${legend}</div>
     <div class="sub" style="margin-top:0">세부 일정</div>
-    <table><thead><tr><th style="width:24%">작업명</th><th style="width:15%">일정</th><th style="width:15%">담당</th><th style="width:auto">메모</th><th style="width:88px"></th></tr></thead>
+    <table><thead><tr><th style="width:28px"></th><th style="width:28px"></th><th style="width:24%">작업명</th><th style="width:15%">일정</th><th style="width:15%">담당</th><th style="width:auto">메모</th><th style="width:88px"></th></tr></thead>
     <tbody>${rows}</tbody></table>
     <button type="button" class="sched-add-btn" onclick="schedAddRow()">+ 항목 추가</button>
     <p class="note">일정·작업명을 수정하면 위 달력에 <b>실시간</b>으로 반영됩니다. 날짜는 <b>7/27</b>처럼 "월/일" 형식으로 입력해 주세요(7·8월만 표시). 전체 작업완료 시점은 등록된 항목 중 <b>가장 늦은 날짜</b>를 기준으로 자동 표시됩니다.</p>
@@ -703,7 +873,8 @@ function renderCalendar(){
     if(dl && dl.id===id) td.classList.add('deadline');
     const dots = td.querySelector('.dots');
     const dot = document.createElement('span');
-    dot.className = 'cal-dot ' + schedColor(id);
+    dot.className = 'cal-dot';
+    dot.style.background = schedColor(id);
     dot.textContent = t || '(제목 없음)';
     dots.appendChild(dot);
   });
@@ -760,10 +931,45 @@ function render(){
     autosize(t);
     t.addEventListener('input',()=>{autosize(t); onField(t);});
   });
+  bindSchedDrag();
+  document.querySelectorAll('#s_sched .color-dot').forEach(b=>{
+    b.addEventListener('click', e=>{ e.stopPropagation(); openColorPicker(b, b.dataset.id); });
+  });
   if(document.getElementById('s_sched')) renderCalendar();
   renderStats();
   if(!document.querySelector('.nav-btn')) buildNav(); else updateNav();
   spy();
+}
+let _dragId=null;
+function bindSchedDrag(){
+  document.querySelectorAll('#s_sched .sched-drag').forEach(h=>{
+    h.addEventListener('dragstart', e=>{
+      _dragId = h.dataset.id;
+      h.closest('tr').classList.add('dragging');
+      e.dataTransfer.effectAllowed='move';
+      try{ e.dataTransfer.setData('text/plain', _dragId); }catch(err){}
+    });
+    h.addEventListener('dragend', ()=>{
+      const tr=h.closest('tr'); if(tr) tr.classList.remove('dragging');
+      document.querySelectorAll('#s_sched tr.drag-over').forEach(x=>x.classList.remove('drag-over'));
+      _dragId=null;
+    });
+  });
+  document.querySelectorAll('#s_sched tr[data-row]').forEach(tr=>{
+    tr.addEventListener('dragover', e=>{
+      if(!_dragId) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect='move';
+      tr.classList.add('drag-over');
+    });
+    tr.addEventListener('dragleave', ()=>tr.classList.remove('drag-over'));
+    tr.addEventListener('drop', e=>{
+      e.preventDefault();
+      tr.classList.remove('drag-over');
+      const targetId = tr.dataset.row;
+      if(_dragId && targetId) schedReorder(_dragId, targetId);
+    });
+  });
 }
 function autosize(t){ t.style.height='auto'; t.style.height=Math.max(26,t.scrollHeight)+'px'; }
 
@@ -842,19 +1048,38 @@ function renderStats(){
 }
 
 /* ═══════════ 저장 ═══════════ */
-let _t={}, _pending={};
+let _t={}, _pending={}, _editStart={};
+const K_LABEL = {checks:'체크', owner:'담당', memo:'메모', title:'작업명', date:'일정', color:'색상'};
+function itemLabel(id){
+  if(String(id).startsWith('sch')) return `세부일정 "${schedTitle(id)||'(제목 없음)'}"`;
+  for(const sec of SECTIONS){
+    const row=(sec.rows||[]).find(r=>r.id===id);
+    if(row) return row.v[1]||row.v[0]||id;
+  }
+  return id;
+}
+function logHistory(entry){
+  if(!HIST_REF) return;
+  entry.ts = Date.now();
+  entry.who = who() || '익명';
+  HIST_REF.push(entry).catch(()=>{});
+}
 function onCheck(e){
   const id=e.target.dataset.id, v=e.target.checked;
+  const prevChecked = !!STATE.checks[id];
   STATE.checks[id]=v;
   _pending['checks:'+id]=v;
   e.target.closest('tr').classList.toggle('done',v);
   if(v && !STATE.owner[id] && who()){
+    const prevOwner = STATE.owner[id]||'';
     STATE.owner[id]=who();
     _pending['owner:'+id]=who();
     const f=document.querySelector(`.f[data-k="owner"][data-id="${id}"]`);
     if(f){ f.value=who(); f.classList.add('filled'); push('owner',id,who()); }
+    logHistory({kind:'field', k:'owner', id, before:prevOwner, after:who(), label:`${itemLabel(id)} 담당 자동입력(${who()})`});
   }
   push('checks',id,v);
+  logHistory({kind:'field', k:'checks', id, before:prevChecked, after:v, label:`${itemLabel(id)} 체크 ${v?'표시':'해제'}`});
   renderStats();
   const sec=SECTIONS.find(s=>s.rows.some(r=>r.id===id));
   if(sec){
@@ -866,12 +1091,19 @@ function onCheck(e){
 }
 function onField(el){
   const id=el.dataset.id, k=el.dataset.k, v=el.value;
+  const key=k+':'+id;
+  if(!(key in _editStart)) _editStart[key] = STATE[k][id]||'';
   STATE[k][id]=v;
-  _pending[k+':'+id]=v;
+  _pending[key]=v;
   el.classList.toggle('filled',!!v.trim());
   if((k==='title'||k==='date') && String(id).startsWith('sch')) renderCalendar();
-  clearTimeout(_t[k+id]);
-  _t[k+id]=setTimeout(()=>push(k,id,v),400);
+  clearTimeout(_t[key]);
+  _t[key]=setTimeout(()=>{
+    push(k,id,v);
+    const before=_editStart[key];
+    delete _editStart[key];
+    if(before!==v) logHistory({kind:'field', k, id, before, after:v, label:`${itemLabel(id)} ${K_LABEL[k]||k} 수정`});
+  },400);
 }
 function push(k,id,v){
   if(!DB) return;
@@ -953,8 +1185,16 @@ document.getElementById('printBtn').addEventListener('click',()=>window.print())
   document.getElementById('dlBtn').addEventListener('click',e=>{
     e.stopPropagation(); menu.classList.toggle('show');
   });
+  document.getElementById('histBtn').addEventListener('click',e=>{
+    e.stopPropagation(); document.getElementById('histMenu').classList.toggle('show');
+  });
   document.addEventListener('click',e=>{
-    if(!document.querySelector('.dl-wrap').contains(e.target)) menu.classList.remove('show');
+    document.querySelectorAll('.dl-wrap').forEach(w=>{
+      if(!w.contains(e.target)){
+        const m=w.querySelector('.dl-menu');
+        if(m) m.classList.remove('show');
+      }
+    });
   });
 })();
 
@@ -1063,6 +1303,7 @@ document.getElementById('who').addEventListener('change',()=>{
   /* 기존 보안규칙 경로(gabwoo-contents-v1) 아래 별도 하위 경로 사용 → 기존 앱과 데이터 분리 */
   DB       = firebase.database().ref('gabwoo-contents-v1/lh2027');
   MEMO_REF = firebase.database().ref('gabwoo-contents-v1/lh2027/memoBoard');
+  HIST_REF = firebase.database().ref('gabwoo-contents-v1/lh2027/history');
 
   /* 익명 인증: 화면에는 아무 표시도 없이 자동으로 로그인 처리 → 이후 규칙에서 auth!=null 조건 통과 */
   firebase.auth().signInAnonymously().then(startApp).catch(err=>{
@@ -1073,11 +1314,16 @@ document.getElementById('who').addEventListener('change',()=>{
 
   function startApp(){
   MEMO_REF.on('value', s=>renderMemo(s.val()));
+  HIST_REF.on('value', s=>{
+    const v=s.val()||{};
+    HISTORY = Object.keys(v).map(k=>({_key:k, ...v[k]})).sort((a,b)=>(b.ts||0)-(a.ts||0));
+    renderHistoryPanel();
+  });
 
   DB.once('value').then(snap=>{
     const d=snap.val()||{};
     STATE.checks=d.checks||{}; STATE.owner=d.owner||{}; STATE.memo=d.memo||{};
-    STATE.title=d.title||{}; STATE.date=d.date||{};
+    STATE.title=d.title||{}; STATE.date=d.date||{}; STATE.color=d.color||{};
     STATE.schedOrder=d.schedOrder||['sch1','sch2','sch3','sch4'];
     document.getElementById('loading').style.display='none';
     render();
@@ -1090,10 +1336,11 @@ document.getElementById('who').addEventListener('change',()=>{
       const selStart=(a&&typeof a.selectionStart==='number')?a.selectionStart:null;
       const selEnd=(a&&typeof a.selectionEnd==='number')?a.selectionEnd:null;
       STATE.checks=d2.checks||{}; STATE.owner=d2.owner||{}; STATE.memo=d2.memo||{};
-      STATE.title=d2.title||{}; STATE.date=d2.date||{};
+      STATE.title=d2.title||{}; STATE.date=d2.date||{}; STATE.color=d2.color||{};
       STATE.schedOrder=d2.schedOrder||['sch1','sch2','sch3','sch4'];
       /* 아직 저장이 확정되지 않은 로컬 편집 값은 원격 스냅샷으로 덮어쓰지 않음 (지운 텍스트가 되살아나는 문제 방지) */
       Object.keys(_pending).forEach(pk=>{
+        if(pk==='schedOrder'){ STATE.schedOrder=_pending[pk]; return; }
         const i=pk.indexOf(':'), k=pk.slice(0,i), id=pk.slice(i+1);
         if(STATE[k]) STATE[k][id]=_pending[pk];
       });
