@@ -215,6 +215,11 @@ table.cal td.deadline .dn{color:var(--red);}
 #s_sched .fwrap{display:flex;align-items:center;min-height:40px;height:100%;box-sizing:border-box;padding:3px 4px;}
 #s_sched .fwrap .f{flex:1;}
 #s_sched td.sched-del{padding:0;text-align:center;vertical-align:middle;}
+.sched-actions{display:flex;align-items:center;justify-content:center;gap:3px;}
+.sched-move-btn{width:20px;height:22px;border:1px solid var(--border);background:#fff;color:var(--gray);
+  border-radius:6px;cursor:pointer;font-size:10px;line-height:1;padding:0;}
+.sched-move-btn:hover:not(:disabled){background:#eef3ff;border-color:#b8ccf3;color:var(--blue);}
+.sched-move-btn:disabled{opacity:.3;cursor:default;}
 .sched-del-btn{width:22px;height:22px;border:1px solid var(--border);background:#fff;color:var(--gray);
   border-radius:6px;cursor:pointer;font-size:12px;line-height:1;padding:0;}
 .sched-del-btn:hover{background:#fdeaea;border-color:#f3b9b9;color:var(--red);}
@@ -514,6 +519,16 @@ function schedRemoveRow(id){
   push('title',id,null); push('date',id,null); push('owner',id,null); push('memo',id,null);
   render();
 }
+function schedMoveRow(id,dir){
+  const arr = schedOrder().slice();
+  const i = arr.indexOf(id);
+  const j = i + dir;
+  if(i<0 || j<0 || j>=arr.length) return;
+  [arr[i], arr[j]] = [arr[j], arr[i]];
+  STATE.schedOrder = arr;
+  pushSchedOrder();
+  render();
+}
 function pushSchedOrder(){
   if(!DB) return;
   setSync('저장 중…');
@@ -621,7 +636,7 @@ const CAL_AUG_HTML = `
 
 function renderSchedCard(sec){
   const ids = schedOrder();
-  const rows = ids.map(id=>{
+  const rows = ids.map((id,idx)=>{
     const t = schedTitle(id), d = schedDate(id);
     const own = STATE.owner[id]||'';
     const mm  = STATE.memo[id]||'';
@@ -630,7 +645,11 @@ function renderSchedCard(sec){
       <td class="editable"><div class="fwrap"><textarea class="f ${d?'filled':''}" rows="1" data-k="date" data-id="${id}" placeholder="일정 (예: 7/27)">${esc(d)}</textarea></div></td>
       <td class="editable"><div class="fwrap"><textarea class="f ${own?'filled':''}" rows="1" data-k="owner" data-id="${id}" placeholder="담당">${esc(own)}</textarea></div></td>
       <td class="editable"><div class="fwrap"><textarea class="f ${mm?'filled':''}" rows="1" data-k="memo" data-id="${id}" placeholder="메모">${esc(mm)}</textarea></div></td>
-      <td class="c sched-del"><button type="button" class="sched-del-btn" onclick="schedRemoveRow('${id}')" title="이 항목 삭제">✕</button></td>
+      <td class="c sched-del"><div class="sched-actions">
+        <button type="button" class="sched-move-btn" onclick="schedMoveRow('${id}',-1)" ${idx===0?'disabled':''} title="위로 이동">▲</button>
+        <button type="button" class="sched-move-btn" onclick="schedMoveRow('${id}',1)" ${idx===ids.length-1?'disabled':''} title="아래로 이동">▼</button>
+        <button type="button" class="sched-del-btn" onclick="schedRemoveRow('${id}')" title="이 항목 삭제">✕</button>
+      </div></td>
     </tr>`;
   }).join('');
 
@@ -658,7 +677,7 @@ function renderSchedCard(sec){
     </div>
     <div class="legend">${legend}</div>
     <div class="sub" style="margin-top:0">세부 일정</div>
-    <table><thead><tr><th style="width:24%">작업명</th><th style="width:15%">일정</th><th style="width:15%">담당</th><th style="width:auto">메모</th><th style="width:34px"></th></tr></thead>
+    <table><thead><tr><th style="width:24%">작업명</th><th style="width:15%">일정</th><th style="width:15%">담당</th><th style="width:auto">메모</th><th style="width:88px"></th></tr></thead>
     <tbody>${rows}</tbody></table>
     <button type="button" class="sched-add-btn" onclick="schedAddRow()">+ 항목 추가</button>
     <p class="note">일정·작업명을 수정하면 위 달력에 <b>실시간</b>으로 반영됩니다. 날짜는 <b>7/27</b>처럼 "월/일" 형식으로 입력해 주세요(7·8월만 표시). 전체 작업완료 시점은 등록된 항목 중 <b>가장 늦은 날짜</b>를 기준으로 자동 표시됩니다.</p>
@@ -823,12 +842,15 @@ function renderStats(){
 }
 
 /* ═══════════ 저장 ═══════════ */
+let _t={}, _pending={};
 function onCheck(e){
   const id=e.target.dataset.id, v=e.target.checked;
   STATE.checks[id]=v;
+  _pending['checks:'+id]=v;
   e.target.closest('tr').classList.toggle('done',v);
   if(v && !STATE.owner[id] && who()){
     STATE.owner[id]=who();
+    _pending['owner:'+id]=who();
     const f=document.querySelector(`.f[data-k="owner"][data-id="${id}"]`);
     if(f){ f.value=who(); f.classList.add('filled'); push('owner',id,who()); }
   }
@@ -842,10 +864,10 @@ function onCheck(e){
   }
   updateNav();
 }
-let _t={};
 function onField(el){
   const id=el.dataset.id, k=el.dataset.k, v=el.value;
   STATE[k][id]=v;
+  _pending[k+':'+id]=v;
   el.classList.toggle('filled',!!v.trim());
   if((k==='title'||k==='date') && String(id).startsWith('sch')) renderCalendar();
   clearTimeout(_t[k+id]);
@@ -853,9 +875,13 @@ function onField(el){
 }
 function push(k,id,v){
   if(!DB) return;
+  const pk=k+':'+id;
   setSync('저장 중…');
   DB.child(k).child(id).set(v)
-    .then(()=>setSync('동기화됨',true))
+    .then(()=>{
+      setSync('동기화됨',true);
+      if(_pending[pk]===v) delete _pending[pk];
+    })
     .catch(()=>setSync('저장 실패'));
 }
 function setSync(t,ok){
@@ -1061,13 +1087,26 @@ document.getElementById('who').addEventListener('change',()=>{
       const d2=s2.val()||{};
       const a=document.activeElement;
       const aid=a&&a.dataset?a.dataset.id:null, ak=a&&a.dataset?a.dataset.k:null;
+      const selStart=(a&&typeof a.selectionStart==='number')?a.selectionStart:null;
+      const selEnd=(a&&typeof a.selectionEnd==='number')?a.selectionEnd:null;
       STATE.checks=d2.checks||{}; STATE.owner=d2.owner||{}; STATE.memo=d2.memo||{};
       STATE.title=d2.title||{}; STATE.date=d2.date||{};
       STATE.schedOrder=d2.schedOrder||['sch1','sch2','sch3','sch4'];
+      /* 아직 저장이 확정되지 않은 로컬 편집 값은 원격 스냅샷으로 덮어쓰지 않음 (지운 텍스트가 되살아나는 문제 방지) */
+      Object.keys(_pending).forEach(pk=>{
+        const i=pk.indexOf(':'), k=pk.slice(0,i), id=pk.slice(i+1);
+        if(STATE[k]) STATE[k][id]=_pending[pk];
+      });
       render();
       if(aid&&ak){
         const el=document.querySelector(`.f[data-k="${ak}"][data-id="${aid}"]`);
-        if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); }
+        if(el){
+          el.focus();
+          const len=el.value.length;
+          const s=(selStart===null)?len:Math.min(selStart,len);
+          const e=(selEnd===null)?len:Math.min(selEnd,len);
+          el.setSelectionRange(s,e);
+        }
       }
     });
   }).catch(err=>{
