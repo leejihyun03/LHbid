@@ -1300,10 +1300,10 @@ document.getElementById('who').addEventListener('change',()=>{
   };
   firebase.initializeApp(config);
 
-  /* 기존 보안규칙 경로(gabwoo-contents-v1) 아래 별도 하위 경로 사용 → 기존 앱과 데이터 분리 */
-  DB       = firebase.database().ref('gabwoo-contents-v1/lh2027');
-  MEMO_REF = firebase.database().ref('gabwoo-contents-v1/lh2027/memoBoard');
-  HIST_REF = firebase.database().ref('gabwoo-contents-v1/lh2027/history');
+  /* 기존 보안규칙 경로(gabwoo-k7m9x2) 아래 별도 하위 경로 사용 → 기존 앱과 데이터 분리 */
+  DB       = firebase.database().ref('gabwoo-k7m9x2/lh2027');
+  MEMO_REF = firebase.database().ref('gabwoo-k7m9x2/lh2027/memoBoard');
+  HIST_REF = firebase.database().ref('gabwoo-k7m9x2/lh2027/history');
 
   /* 익명 인증: 화면에는 아무 표시도 없이 자동으로 로그인 처리 → 이후 규칙에서 auth!=null 조건 통과 */
   firebase.auth().signInAnonymously().then(startApp).catch(err=>{
